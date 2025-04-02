@@ -78,3 +78,109 @@ pub enum OtaError {
 
 pub type Result<T> = std::result::Result<T, OtaError>;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_signature_invalid() {
+        let e = OtaError::SignatureInvalid("bad sig".into());
+        assert_eq!(format!("{e}"), "signature verification failed: bad sig");
+    }
+
+    #[test]
+    fn display_manifest_parse() {
+        let e = OtaError::ManifestParse("unexpected token".into());
+        assert_eq!(format!("{e}"), "manifest parse error: unexpected token");
+    }
+
+    #[test]
+    fn display_partition_file_missing() {
+        let e = OtaError::PartitionFileMissing("rootfs".into());
+        assert_eq!(format!("{e}"), "partition file missing: rootfs");
+    }
+
+    #[test]
+    fn display_hash_mismatch() {
+        let e = OtaError::HashMismatch {
+            name: "kernel".into(),
+            expected: "aaa".into(),
+            actual: "bbb".into(),
+        };
+        assert_eq!(
+            format!("{e}"),
+            "hash mismatch for partition 'kernel': expected aaa, got bbb"
+        );
+    }
+
+    #[test]
+    fn display_rollback_violation() {
+        let e = OtaError::RollbackViolation {
+            package: "1.0.0".into(),
+            rollback: "1.0.0".into(),
+        };
+        assert_eq!(
+            format!("{e}"),
+            "version rollback rejected: package version 1.0.0 <= rollback version 1.0.0"
+        );
+    }
+
+    #[test]
+    fn display_manifest_expired() {
+        let e = OtaError::ManifestExpired {
+            timestamp: "2025-01-01T00:00:00Z".into(),
+            max_age_hours: 72,
+        };
+        assert_eq!(
+            format!("{e}"),
+            "manifest expired: timestamp 2025-01-01T00:00:00Z is older than 72 hours"
+        );
+    }
+
+    #[test]
+    fn display_key_generation() {
+        let e = OtaError::KeyGeneration("rng failure".into());
+        assert_eq!(format!("{e}"), "key generation error: rng failure");
+    }
+
+    #[test]
+    fn display_hex_decode() {
+        let inner = hex::decode("zz").unwrap_err();
+        let e = OtaError::HexDecode(inner);
+        let msg = format!("{e}");
+        assert!(msg.contains("hex decode error"), "got: {msg}");
+    }
+
+    #[test]
+    fn display_policy_violation() {
+        let e = OtaError::PolicyViolation("Ed25519 required".into());
+        assert_eq!(format!("{e}"), "policy violation: Ed25519 required");
+    }
+
+    #[test]
+    fn display_device_incompatible() {
+        let e = OtaError::DeviceIncompatible("hw_rev v2 not supported".into());
+        assert_eq!(
+            format!("{e}"),
+            "device compatibility error: hw_rev v2 not supported"
+        );
+    }
+
+    #[test]
+    fn display_batch_failure() {
+        let e = OtaError::BatchFailure {
+            count: 3,
+            total: 10,
+        };
+        assert_eq!(
+            format!("{e}"),
+            "batch verification error: 3 of 10 packages failed"
+        );
+    }
+
+    #[test]
+    fn error_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<OtaError>();
+    }
+}
