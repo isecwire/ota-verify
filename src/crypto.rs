@@ -185,3 +185,163 @@ pub fn verify_certificate_chain(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Helper: generate keypair into temp files, return (secret_path, public_path).
+    fn gen_temp_keypair() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("secret.key");
+        let public = dir.path().join("public.key");
+        generate_keypair(&secret, &public).expect("keygen");
+        (dir, secret, public)
+    }
+
+    #[test]
+    fn keygen_produces_valid_files() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let secret_hex = std::fs::read_to_string(&secret_path).unwrap();
+        let public_hex = std::fs::read_to_string(&public_path).unwrap();
+
+        // Ed25519 keys are 32 bytes = 64 hex characters
+        assert_eq!(secret_hex.len(), 64);
+        assert_eq!(public_hex.len(), 64);
+
+        // Ensure they decode as valid hex
+        assert!(hex::decode(&secret_hex).is_ok());
+        assert!(hex::decode(&public_hex).is_ok());
+    }
+
+    #[test]
+    fn sign_then_verify_succeeds() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload v2.4.1";
+        let sig_hex = sign_bytes(data, &secret_path).expect("sign");
+
+        verify_signature(data, &sig_hex, &public_path).expect("verify should succeed");
+    }
+
+    #[test]
+    fn verify_with_wrong_key_fails() {
+        let (_dir1, secret_path, _public_path1) = gen_temp_keypair();
+        let (_dir2, _secret_path2, public_path2) = gen_temp_keypair();
+
+        let data = b"firmware payload v2.4.1";
+        let sig_hex = sign_bytes(data, &secret_path).expect("sign");
+
+        let result = verify_signature(data, &sig_hex, &public_path2);
+        assert!(result.is_err(), "verification with wrong key should fail");
+    }
+
+    #[test]
+    fn verify_with_tampered_data_fails() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload v2.4.1";
+        let sig_hex = sign_bytes(data, &secret_path).expect("sign");
+
+        let tampered = b"firmware payload v2.4.1-TAMPERED";
+        let result = verify_signature(tampered, &sig_hex, &public_path);
+        assert!(result.is_err(), "verification with tampered data should fail");
+    }
+
+    #[test]
+    fn verify_with_corrupted_signature_fails() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload";
+        let mut sig_hex = sign_bytes(data, &secret_path).expect("sign");
+
+        // Flip a character in the signature
+        let bytes = unsafe { sig_hex.as_bytes_mut() };
+        bytes[0] = if bytes[0] == b'a' { b'b' } else { b'a' };
+
+        let result = verify_signature(data, &sig_hex, &public_path);
+        assert!(
+            result.is_err(),
+            "verification with corrupted signature should fail"
+        );
+    }
+
+    #[test]
+    fn sign_with_missing_key_file_fails() {
+        let result = sign_bytes(b"data", Path::new("/nonexistent/secret.key"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn verify_with_missing_key_file_fails() {
+        let result = verify_signature(b"data", "aabb", Path::new("/nonexistent/public.key"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn multi_algorithm_keygen_ed25519() {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("ed-secret.key");
+        let public = dir.path().join("ed-public.key");
+        generate_keypair_for_algorithm(&KeyAlgorithm::Ed25519, &secret, &public).expect("keygen");
+
+        let data = b"test data";
+        let sig = sign_bytes_with_algorithm(data, &secret, &KeyAlgorithm::Ed25519).expect("sign");
+        verify_with_algorithm(data, &sig, &public, &KeyAlgorithm::Ed25519).expect("verify");
+    }
+
+    #[test]
+    fn multi_algorithm_keygen_ecdsa() {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("ec-secret.key");
+        let public = dir.path().join("ec-public.key");
+        generate_keypair_for_algorithm(&KeyAlgorithm::EcdsaP256, &secret, &public).expect("keygen");
+
+        let data = b"test data";
+        let sig =
+            sign_bytes_with_algorithm(data, &secret, &KeyAlgorithm::EcdsaP256).expect("sign");
+        verify_with_algorithm(data, &sig, &public, &KeyAlgorithm::EcdsaP256).expect("verify");
+    }
+
+    #[test]
+    fn multi_algorithm_keygen_rsa() {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("rsa-secret.key");
+        let public = dir.path().join("rsa-public.key");
+        generate_keypair_for_algorithm(&KeyAlgorithm::RsaPss, &secret, &public).expect("keygen");
+
+        let data = b"test data";
+        let sig = sign_bytes_with_algorithm(data, &secret, &KeyAlgorithm::RsaPss).expect("sign");
+        verify_with_algorithm(data, &sig, &public, &KeyAlgorithm::RsaPss).expect("verify");
+    }
+
+    #[test]
+    fn certificate_chain_valid() {
+        let (_dir, _secret_path, public_path) = gen_temp_keypair();
+        let pub_hex = std::fs::read_to_string(&public_path).unwrap();
+        let chain = vec![pub_hex.clone(), pub_hex];
+
+        verify_certificate_chain(&chain, &public_path, &KeyAlgorithm::Ed25519)
+            .expect("chain should be valid");
+    }
+
+    #[test]
+    fn certificate_chain_empty_rejected() {
+        let (_dir, _secret_path, public_path) = gen_temp_keypair();
+        let result =
+            verify_certificate_chain(&[], &public_path, &KeyAlgorithm::Ed25519);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn certificate_chain_wrong_root_rejected() {
+        let (_dir1, _sec1, pub1) = gen_temp_keypair();
+        let (_dir2, _sec2, pub2) = gen_temp_keypair();
+        let pub1_hex = std::fs::read_to_string(&pub1).unwrap();
+        let chain = vec![pub1_hex.clone(), pub1_hex];
+
+        let result = verify_certificate_chain(&chain, &pub2, &KeyAlgorithm::Ed25519);
+        assert!(result.is_err());
+    }
+}
