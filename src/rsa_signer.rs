@@ -67,3 +67,64 @@ pub fn verify_signature(data: &[u8], signature_hex: &str, public_key_path: &Path
         .map_err(|e| OtaError::SignatureInvalid(format!("RSA verification failed: {e}")))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn gen_temp_keypair() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("rsa-secret.key");
+        let public = dir.path().join("rsa-public.key");
+        generate_keypair(&secret, &public).expect("rsa keygen");
+        (dir, secret, public)
+    }
+
+    #[test]
+    fn rsa_keygen_produces_valid_files() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let secret_hex = std::fs::read_to_string(&secret_path).unwrap();
+        let public_hex = std::fs::read_to_string(&public_path).unwrap();
+
+        // RSA keys are much larger than Ed25519
+        assert!(secret_hex.len() > 128);
+        assert!(public_hex.len() > 128);
+        assert!(hex::decode(&secret_hex).is_ok());
+        assert!(hex::decode(&public_hex).is_ok());
+    }
+
+    #[test]
+    fn rsa_sign_then_verify_succeeds() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload rsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("rsa sign");
+
+        verify_signature(data, &sig_hex, &public_path).expect("rsa verify should succeed");
+    }
+
+    #[test]
+    fn rsa_verify_with_wrong_key_fails() {
+        let (_dir1, secret_path, _pub1) = gen_temp_keypair();
+        let (_dir2, _sec2, public_path2) = gen_temp_keypair();
+
+        let data = b"firmware payload rsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("rsa sign");
+
+        let result = verify_signature(data, &sig_hex, &public_path2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rsa_verify_with_tampered_data_fails() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload rsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("rsa sign");
+
+        let tampered = b"firmware payload rsa TAMPERED";
+        let result = verify_signature(tampered, &sig_hex, &public_path);
+        assert!(result.is_err());
+    }
+}
