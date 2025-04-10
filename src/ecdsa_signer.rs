@@ -58,3 +58,65 @@ pub fn verify_signature(data: &[u8], signature_hex: &str, public_key_path: &Path
         .map_err(|e| OtaError::SignatureInvalid(format!("ECDSA verification failed: {e}")))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn gen_temp_keypair() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempdir().expect("tmpdir");
+        let secret = dir.path().join("ecdsa-secret.key");
+        let public = dir.path().join("ecdsa-public.key");
+        generate_keypair(&secret, &public).expect("ecdsa keygen");
+        (dir, secret, public)
+    }
+
+    #[test]
+    fn ecdsa_keygen_produces_valid_files() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let secret_hex = std::fs::read_to_string(&secret_path).unwrap();
+        let public_hex = std::fs::read_to_string(&public_path).unwrap();
+
+        // P-256 private key is 32 bytes = 64 hex chars
+        assert_eq!(secret_hex.len(), 64);
+        // Compressed public key is 33 bytes = 66 hex chars
+        assert_eq!(public_hex.len(), 66);
+        assert!(hex::decode(&secret_hex).is_ok());
+        assert!(hex::decode(&public_hex).is_ok());
+    }
+
+    #[test]
+    fn ecdsa_sign_then_verify_succeeds() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload ecdsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("ecdsa sign");
+
+        verify_signature(data, &sig_hex, &public_path).expect("ecdsa verify should succeed");
+    }
+
+    #[test]
+    fn ecdsa_verify_with_wrong_key_fails() {
+        let (_dir1, secret_path, _pub1) = gen_temp_keypair();
+        let (_dir2, _sec2, public_path2) = gen_temp_keypair();
+
+        let data = b"firmware payload ecdsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("ecdsa sign");
+
+        let result = verify_signature(data, &sig_hex, &public_path2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ecdsa_verify_with_tampered_data_fails() {
+        let (_dir, secret_path, public_path) = gen_temp_keypair();
+
+        let data = b"firmware payload ecdsa test";
+        let sig_hex = sign_bytes(data, &secret_path).expect("ecdsa sign");
+
+        let tampered = b"firmware payload ecdsa TAMPERED";
+        let result = verify_signature(tampered, &sig_hex, &public_path);
+        assert!(result.is_err());
+    }
+}
