@@ -199,3 +199,142 @@ pub struct OtaManifest {
 fn default_manifest_version() -> u32 {
     1
 }
+
+impl OtaManifest {
+    /// Load a manifest from a JSON file.
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let data = std::fs::read_to_string(path)?;
+        Self::from_json(&data)
+    }
+
+    /// Parse a manifest from a JSON string.
+    pub fn from_json(json: &str) -> Result<Self> {
+        let manifest: Self =
+            serde_json::from_str(json).map_err(|e| OtaError::ManifestParse(e.to_string()))?;
+        manifest.validate_version()?;
+        Ok(manifest)
+    }
+
+    /// Validate the manifest schema version is supported.
+    fn validate_version(&self) -> Result<()> {
+        match self.manifest_version {
+            1 | 2 => Ok(()),
+            v => Err(OtaError::ManifestVersionUnsupported(format!(
+                "manifest_version {} is not supported (expected 1 or 2)",
+                v
+            ))),
+        }
+    }
+
+    /// Returns true if this is a v2 manifest with extended fields.
+    pub fn is_v2(&self) -> bool {
+        self.manifest_version >= 2
+    }
+
+    /// Serialize the manifest to a pretty-printed JSON string.
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string_pretty(self).map_err(|e| OtaError::ManifestParse(e.to_string()))
+    }
+
+    /// Serialize the manifest to canonical (compact) JSON for signing.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).map_err(|e| OtaError::ManifestParse(e.to_string()))
+    }
+
+    /// Save the manifest to a JSON file.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let json = self.to_json()?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Compute total image size across all partitions.
+    pub fn total_image_size(&self) -> u64 {
+        self.partitions.iter().map(|p| p.size).sum()
+    }
+
+    /// Return the effective signature algorithm, defaulting to Ed25519 for v1.
+    pub fn effective_algorithm(&self) -> KeyAlgorithm {
+        self.signature_algorithm
+            .clone()
+            .unwrap_or(KeyAlgorithm::Ed25519)
+    }
+
+    /// Print a human-readable summary of the manifest.
+    pub fn print_summary(&self) {
+        println!("OTA Manifest Summary");
+        println!("====================");
+        println!("Manifest version: v{}", self.manifest_version);
+        println!("Version:          {}", self.version);
+        println!("Device type:      {}", self.device_type);
+        println!("Timestamp:        {}", self.timestamp);
+        println!("Min battery:      {}%", self.min_battery);
+        println!("Rollback version: {}", self.rollback_version);
+        println!("Partitions:       {}", self.partitions.len());
+
+        if let Some(ref algo) = self.signature_algorithm {
+            println!("Signature algo:   {}", algo);
+        }
+
+        println!();
+        for (i, p) in self.partitions.iter().enumerate() {
+            println!("  [{}] {}", i + 1, p.name);
+            println!("      Hash:   {}", p.hash_sha256);
+            println!("      Size:   {} bytes", p.size);
+            println!("      Slot:   {}", p.target_slot);
+            if let Some(ref delta) = p.delta {
+                println!("      Delta:  base={}, algo={}", delta.delta_base_version, delta.patch_algorithm);
+            }
+        }
+
+        if let Some(ref compat) = self.compatibility {
+            println!();
+            println!("Device Compatibility:");
+            if !compat.hardware_revisions.is_empty() {
+                println!("  Hardware revisions: {}", compat.hardware_revisions.join(", "));
+            }
+            if !compat.boot_rom_versions.is_empty() {
+                println!("  Boot ROM versions:  {}", compat.boot_rom_versions.join(", "));
+            }
+        }
+
+        if let Some(ref hooks) = self.hooks {
+            println!();
+            println!("Install Hooks:");
+            for hook in hooks {
+                println!("  [{}] {}", hook.phase, hook.script);
+            }
+        }
+
+        if let Some(ref deps) = self.dependencies {
+            if !deps.is_empty() {
+                println!();
+                println!("Dependencies:");
+                for dep in deps {
+                    println!("  {} >= {}", dep.component, dep.version);
+                }
+            }
+        }
+
+        if let Some(ref rotation) = self.key_rotation {
+            println!();
+            println!("Key Rotation:");
+            println!("  Next key algo:  {}", rotation.next_key_algorithm);
+            println!("  Next public key: {}...", &rotation.next_public_key[..std::cmp::min(32, rotation.next_public_key.len())]);
+        }
+
+        if let Some(target_size) = self.target_partition_size {
+            let total = self.total_image_size();
+            println!();
+            println!("Size Constraints:");
+            println!("  Total image size:     {} bytes", total);
+            println!("  Target partition:     {} bytes", target_size);
+            if total <= target_size {
+                println!("  Headroom:             {} bytes", target_size - total);
+            } else {
+                println!("  OVERFLOW:             {} bytes over limit", total - target_size);
+            }
+        }
+    }
+}
+
