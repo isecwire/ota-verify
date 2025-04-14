@@ -338,3 +338,253 @@ impl OtaManifest {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample_manifest() -> OtaManifest {
+        OtaManifest {
+            manifest_version: 1,
+            version: "2.4.1".into(),
+            device_type: "isecwire-gateway-v3".into(),
+            partitions: vec![
+                Partition {
+                    name: "rootfs".into(),
+                    hash_sha256: "abcdef1234567890".into(),
+                    size: 1024,
+                    target_slot: TargetSlot::SlotA,
+                    delta: None,
+                },
+                Partition {
+                    name: "bootloader".into(),
+                    hash_sha256: "0987654321fedcba".into(),
+                    size: 512,
+                    target_slot: TargetSlot::Both,
+                    delta: None,
+                },
+            ],
+            timestamp: Utc::now(),
+            min_battery: 30,
+            rollback_version: "2.3.0".into(),
+            signature_algorithm: None,
+            key_rotation: None,
+            certificate_chain: None,
+            compatibility: None,
+            hooks: None,
+            dependencies: None,
+            target_partition_size: None,
+            required_free_space: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn sample_v2_manifest() -> OtaManifest {
+        let mut m = sample_manifest();
+        m.manifest_version = 2;
+        m.signature_algorithm = Some(KeyAlgorithm::Ed25519);
+        m.compatibility = Some(DeviceCompatibility {
+            hardware_revisions: vec!["v3".into(), "v3.1".into()],
+            boot_rom_versions: vec!["1.2".into()],
+        });
+        m.hooks = Some(vec![InstallHook {
+            script: "pre_check.sh".into(),
+            hash_sha256: "aabbccdd".into(),
+            phase: "pre_install".into(),
+        }]);
+        m.dependencies = Some(vec![UpdateDependency {
+            version: "2.3.0".into(),
+            component: "bootloader".into(),
+        }]);
+        m.target_partition_size = Some(100_000_000);
+        m.required_free_space = Some(10_000_000);
+        m.partitions[0].delta = Some(DeltaMetadata {
+            delta_base_version: "2.3.0".into(),
+            patch_algorithm: PatchAlgorithm::Bsdiff,
+        });
+        m
+    }
+
+    #[test]
+    fn serialization_roundtrip() {
+        let manifest = sample_manifest();
+        let json = manifest.to_json().expect("serialize");
+        let parsed = OtaManifest::from_json(&json).expect("deserialize");
+
+        assert_eq!(parsed.version, manifest.version);
+        assert_eq!(parsed.device_type, manifest.device_type);
+        assert_eq!(parsed.partitions.len(), manifest.partitions.len());
+        assert_eq!(parsed.partitions[0].name, "rootfs");
+        assert_eq!(parsed.partitions[1].target_slot, TargetSlot::Both);
+        assert_eq!(parsed.min_battery, manifest.min_battery);
+        assert_eq!(parsed.rollback_version, manifest.rollback_version);
+    }
+
+    #[test]
+    fn v2_serialization_roundtrip() {
+        let manifest = sample_v2_manifest();
+        let json = manifest.to_json().expect("serialize");
+        let parsed = OtaManifest::from_json(&json).expect("deserialize");
+
+        assert_eq!(parsed.manifest_version, 2);
+        assert!(parsed.is_v2());
+        assert_eq!(
+            parsed.signature_algorithm,
+            Some(KeyAlgorithm::Ed25519)
+        );
+        assert!(parsed.compatibility.is_some());
+        assert!(parsed.hooks.is_some());
+        assert!(parsed.dependencies.is_some());
+        assert_eq!(parsed.target_partition_size, Some(100_000_000));
+        assert!(parsed.partitions[0].delta.is_some());
+    }
+
+    #[test]
+    fn canonical_json_roundtrip() {
+        let manifest = sample_manifest();
+        let bytes = manifest.to_canonical_json().expect("canonical");
+        let parsed: OtaManifest = serde_json::from_slice(&bytes).expect("parse canonical");
+        assert_eq!(parsed.version, manifest.version);
+        assert_eq!(parsed.partitions.len(), 2);
+    }
+
+    #[test]
+    fn v1_manifest_defaults_version_to_1() {
+        let json = r#"{
+            "version": "1.0.0",
+            "device_type": "test",
+            "partitions": [],
+            "timestamp": "2025-01-01T00:00:00Z",
+            "min_battery": 20,
+            "rollback_version": "0.9.0"
+        }"#;
+        let parsed = OtaManifest::from_json(json).expect("parse v1");
+        assert_eq!(parsed.manifest_version, 1);
+        assert!(!parsed.is_v2());
+    }
+
+    #[test]
+    fn unsupported_manifest_version_rejected() {
+        let json = r#"{
+            "manifest_version": 99,
+            "version": "1.0.0",
+            "device_type": "test",
+            "partitions": [],
+            "timestamp": "2025-01-01T00:00:00Z",
+            "min_battery": 20,
+            "rollback_version": "0.9.0"
+        }"#;
+        let result = OtaManifest::from_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn total_image_size_computed() {
+        let manifest = sample_manifest();
+        assert_eq!(manifest.total_image_size(), 1024 + 512);
+    }
+
+    #[test]
+    fn effective_algorithm_defaults_to_ed25519() {
+        let manifest = sample_manifest();
+        assert_eq!(manifest.effective_algorithm(), KeyAlgorithm::Ed25519);
+    }
+
+    #[test]
+    fn invalid_manifest_missing_version() {
+        let json = r#"{
+            "device_type": "test",
+            "partitions": [],
+            "timestamp": "2025-01-01T00:00:00Z",
+            "min_battery": 20,
+            "rollback_version": "1.0.0"
+        }"#;
+        let result = OtaManifest::from_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_manifest_missing_partitions() {
+        let json = r#"{
+            "version": "1.0.0",
+            "device_type": "test",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "min_battery": 20,
+            "rollback_version": "0.9.0"
+        }"#;
+        let result = OtaManifest::from_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_manifest_missing_timestamp() {
+        let json = r#"{
+            "version": "1.0.0",
+            "device_type": "test",
+            "partitions": [],
+            "min_battery": 20,
+            "rollback_version": "0.9.0"
+        }"#;
+        let result = OtaManifest::from_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_manifest_garbage_input() {
+        let result = OtaManifest::from_json("not json at all");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn target_slot_serde_snake_case() {
+        let slot_a: TargetSlot = serde_json::from_str(r#""slot_a""#).unwrap();
+        assert_eq!(slot_a, TargetSlot::SlotA);
+
+        let slot_b: TargetSlot = serde_json::from_str(r#""slot_b""#).unwrap();
+        assert_eq!(slot_b, TargetSlot::SlotB);
+
+        let both: TargetSlot = serde_json::from_str(r#""both""#).unwrap();
+        assert_eq!(both, TargetSlot::Both);
+    }
+
+    #[test]
+    fn target_slot_invalid_value() {
+        let result: std::result::Result<TargetSlot, _> =
+            serde_json::from_str(r#""slot_c""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn target_slot_display() {
+        assert_eq!(TargetSlot::SlotA.to_string(), "slot_a");
+        assert_eq!(TargetSlot::SlotB.to_string(), "slot_b");
+        assert_eq!(TargetSlot::Both.to_string(), "both");
+    }
+
+    #[test]
+    fn key_algorithm_display() {
+        assert_eq!(KeyAlgorithm::Ed25519.to_string(), "ed25519");
+        assert_eq!(KeyAlgorithm::RsaPss.to_string(), "rsa_pss");
+        assert_eq!(KeyAlgorithm::EcdsaP256.to_string(), "ecdsa_p256");
+    }
+
+    #[test]
+    fn patch_algorithm_display() {
+        assert_eq!(PatchAlgorithm::Bsdiff.to_string(), "bsdiff");
+        assert_eq!(PatchAlgorithm::Zstd.to_string(), "zstd");
+    }
+
+    #[test]
+    fn file_roundtrip() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let path = dir.path().join("manifest.json");
+
+        let manifest = sample_manifest();
+        manifest.save(&path).expect("save");
+
+        let loaded = OtaManifest::from_file(&path).expect("load");
+        assert_eq!(loaded.version, manifest.version);
+        assert_eq!(loaded.device_type, manifest.device_type);
+        assert_eq!(loaded.partitions.len(), manifest.partitions.len());
+    }
+}
