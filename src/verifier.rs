@@ -429,3 +429,105 @@ impl OtaVerifier {
         ))
     }
 }
+
+/// Verify a batch of OTA packages from a directory.
+///
+/// Each subdirectory is expected to contain a manifest.json, partition files,
+/// and a manifest.sig file. Returns results for each package.
+pub fn batch_verify(
+    batch_dir: &Path,
+    public_key_path: &Path,
+    max_age_hours: u64,
+    algorithm: Option<KeyAlgorithm>,
+    policy: Option<&VerificationPolicy>,
+) -> Result<Vec<(String, bool, String)>> {
+    let mut results = Vec::new();
+
+    let entries = std::fs::read_dir(batch_dir)?;
+    let mut dirs: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    dirs.sort_by_key(|e| e.file_name());
+
+    if dirs.is_empty() {
+        return Err(OtaError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no subdirectories found in batch directory",
+        )));
+    }
+
+    for entry in &dirs {
+        let pkg_dir = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        let manifest_path = pkg_dir.join("manifest.json");
+        let sig_path = pkg_dir.join("manifest.sig");
+
+        if !manifest_path.exists() {
+            results.push((name, false, "manifest.json not found".into()));
+            continue;
+        }
+        if !sig_path.exists() {
+            results.push((name, false, "manifest.sig not found".into()));
+            continue;
+        }
+
+        let manifest = match OtaManifest::from_file(&manifest_path) {
+            Ok(m) => m,
+            Err(e) => {
+                results.push((name, false, format!("manifest parse error: {e}")));
+                continue;
+            }
+        };
+
+        let config = VerifyConfig {
+            package_dir: pkg_dir.clone(),
+            public_key_path: public_key_path.to_path_buf(),
+            signature_path: sig_path,
+            max_age_hours,
+            algorithm: algorithm.clone(),
+            policy: policy.cloned(),
+            audit_log_path: None,
+            manifest_path: Some(manifest_path),
+            ca_key_path: None,
+        };
+
+        let verifier = OtaVerifier::new(config);
+        match verifier.verify(&manifest) {
+            Ok(checks) => {
+                results.push((name, true, format!("{} checks passed", checks.len())));
+            }
+            Err(e) => {
+                results.push((name, false, e.to_string()));
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Compare two dotted version strings numerically.
+fn version_greater_than(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.')
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let va = parse(a);
+    let vb = parse(b);
+
+    let max_len = va.len().max(vb.len());
+    for i in 0..max_len {
+        let pa = va.get(i).copied().unwrap_or(0);
+        let pb = vb.get(i).copied().unwrap_or(0);
+        if pa > pb {
+            return true;
+        }
+        if pa < pb {
+            return false;
+        }
+    }
+    false // equal
+}
+
