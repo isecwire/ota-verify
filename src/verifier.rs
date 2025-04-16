@@ -531,3 +531,315 @@ fn version_greater_than(a: &str, b: &str) -> bool {
     false // equal
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{Partition, TargetSlot};
+    use chrono::{TimeDelta, Utc};
+    use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    // ---- version_greater_than tests ----
+
+    #[test]
+    fn version_greater_patch() {
+        assert!(version_greater_than("1.0.1", "1.0.0"));
+    }
+
+    #[test]
+    fn version_greater_minor() {
+        assert!(version_greater_than("1.1.0", "1.0.99"));
+    }
+
+    #[test]
+    fn version_greater_major() {
+        assert!(version_greater_than("2.0.0", "1.9.9"));
+    }
+
+    #[test]
+    fn version_equal_returns_false() {
+        assert!(!version_greater_than("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_lesser_returns_false() {
+        assert!(!version_greater_than("1.0.0", "2.0.0"));
+    }
+
+    #[test]
+    fn version_different_segment_count() {
+        assert!(version_greater_than("1.0.0.1", "1.0.0"));
+        assert!(!version_greater_than("1.0.0", "1.0.0.1"));
+    }
+
+    #[test]
+    fn version_single_segment() {
+        assert!(version_greater_than("3", "2"));
+        assert!(!version_greater_than("1", "2"));
+    }
+
+    // ---- hash verification tests ----
+
+    fn sha256_hex(data: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hex::encode(hasher.finalize())
+    }
+
+    fn make_manifest_and_package(
+        version: &str,
+        rollback: &str,
+        timestamp: chrono::DateTime<Utc>,
+        partition_data: &[(&str, &[u8])],
+    ) -> (OtaManifest, tempfile::TempDir) {
+        let dir = tempdir().expect("tmpdir");
+
+        let partitions: Vec<Partition> = partition_data
+            .iter()
+            .map(|(name, data)| {
+                std::fs::write(dir.path().join(name), data).expect("write partition");
+                Partition {
+                    name: name.to_string(),
+                    hash_sha256: sha256_hex(data),
+                    size: data.len() as u64,
+                    target_slot: TargetSlot::SlotA,
+                    delta: None,
+                }
+            })
+            .collect();
+
+        let manifest = OtaManifest {
+            manifest_version: 1,
+            version: version.into(),
+            device_type: "test-device".into(),
+            partitions,
+            timestamp,
+            min_battery: 20,
+            rollback_version: rollback.into(),
+            signature_algorithm: None,
+            key_rotation: None,
+            certificate_chain: None,
+            compatibility: None,
+            hooks: None,
+            dependencies: None,
+            target_partition_size: None,
+            required_free_space: None,
+            metadata: HashMap::new(),
+        };
+
+        (manifest, dir)
+    }
+
+    /// Create a signed package directory with keys, sig, and partition files.
+    fn setup_signed_package(
+        version: &str,
+        rollback: &str,
+        timestamp: chrono::DateTime<Utc>,
+        partition_data: &[(&str, &[u8])],
+    ) -> (OtaManifest, tempfile::TempDir) {
+        let (manifest, dir) =
+            make_manifest_and_package(version, rollback, timestamp, partition_data);
+
+        // Generate keypair
+        let secret_path = dir.path().join("secret.key");
+        let public_path = dir.path().join("public.key");
+        crate::crypto::generate_keypair(&secret_path, &public_path).expect("keygen");
+
+        // Sign the manifest
+        let canonical = manifest.to_canonical_json().expect("canonical");
+        let sig_hex = crate::crypto::sign_bytes(&canonical, &secret_path).expect("sign");
+        let sig_path = dir.path().join("manifest.sig");
+        std::fs::write(&sig_path, &sig_hex).expect("write sig");
+
+        (manifest, dir)
+    }
+
+    fn default_verify_config(dir: &Path) -> VerifyConfig {
+        VerifyConfig {
+            package_dir: dir.to_path_buf(),
+            public_key_path: dir.join("public.key"),
+            signature_path: dir.join("manifest.sig"),
+            max_age_hours: 0,
+            algorithm: None,
+            policy: None,
+            audit_log_path: None,
+            manifest_path: None,
+            ca_key_path: None,
+        }
+    }
+
+    #[test]
+    fn hash_verification_pass() {
+        let data: &[u8] = b"rootfs image content";
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", data)]);
+
+        let config = default_verify_config(dir.path());
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_ok(), "full verify should pass: {:?}", result.err());
+    }
+
+    #[test]
+    fn hash_verification_fail_tampered_file() {
+        let data: &[u8] = b"rootfs image content";
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", data)]);
+
+        // Tamper with the partition file after signing
+        std::fs::write(dir.path().join("rootfs"), b"TAMPERED").expect("tamper");
+
+        let config = default_verify_config(dir.path());
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("hash mismatch") || err_str.contains("size"),
+            "expected hash mismatch or size error, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn rollback_version_check_pass() {
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", b"data")]);
+
+        let config = default_verify_config(dir.path());
+        let verifier = OtaVerifier::new(config);
+        assert!(verifier.verify(&manifest).is_ok());
+    }
+
+    #[test]
+    fn rollback_version_check_fail() {
+        let (manifest, dir) =
+            setup_signed_package("1.0.0", "1.0.0", Utc::now(), &[("rootfs", b"data")]);
+
+        let config = default_verify_config(dir.path());
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("rollback"),
+            "expected rollback error, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn expired_manifest_detected() {
+        let old_timestamp = Utc::now() - TimeDelta::hours(100);
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", old_timestamp, &[("rootfs", b"data")]);
+
+        let mut config = default_verify_config(dir.path());
+        config.max_age_hours = 72;
+
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("expired"),
+            "expected expired error, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn non_expired_manifest_passes_age_check() {
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", b"data")]);
+
+        let mut config = default_verify_config(dir.path());
+        config.max_age_hours = 72;
+
+        let verifier = OtaVerifier::new(config);
+        assert!(verifier.verify(&manifest).is_ok());
+    }
+
+    #[test]
+    fn missing_partition_file_detected() {
+        let (mut manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", b"data")]);
+
+        // Add a phantom partition
+        manifest.partitions.push(Partition {
+            name: "nonexistent_partition".into(),
+            hash_sha256: "0000".into(),
+            size: 0,
+            target_slot: TargetSlot::SlotB,
+            delta: None,
+        });
+
+        // Re-sign because manifest changed
+        let canonical = manifest.to_canonical_json().expect("canonical");
+        let sig_hex =
+            crate::crypto::sign_bytes(&canonical, &dir.path().join("secret.key")).expect("sign");
+        std::fs::write(dir.path().join("manifest.sig"), &sig_hex).expect("write sig");
+
+        let config = default_verify_config(dir.path());
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("missing"),
+            "expected partition missing error, got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn audit_log_written() {
+        let data: &[u8] = b"rootfs image content";
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", data)]);
+
+        let audit_path = dir.path().join("audit.json");
+        let mut config = default_verify_config(dir.path());
+        config.audit_log_path = Some(audit_path.clone());
+        config.manifest_path = Some(dir.path().join("manifest.json"));
+
+        let verifier = OtaVerifier::new(config);
+        verifier.verify(&manifest).expect("verify");
+
+        assert!(audit_path.exists(), "audit log should be written");
+        let log_data = std::fs::read_to_string(&audit_path).unwrap();
+        assert!(log_data.contains("signature"));
+        assert!(log_data.contains("PASS") || log_data.contains("pass"));
+    }
+
+    #[test]
+    fn policy_enforcement_pass() {
+        let data: &[u8] = b"rootfs image content";
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", data)]);
+
+        let policy = VerificationPolicy::default();
+        let mut config = default_verify_config(dir.path());
+        config.policy = Some(policy);
+
+        let verifier = OtaVerifier::new(config);
+        assert!(verifier.verify(&manifest).is_ok());
+    }
+
+    #[test]
+    fn policy_enforcement_fail() {
+        let data: &[u8] = b"rootfs image content";
+        let (manifest, dir) =
+            setup_signed_package("2.0.0", "1.0.0", Utc::now(), &[("rootfs", data)]);
+
+        let policy = VerificationPolicy {
+            require_algorithm: Some(KeyAlgorithm::RsaPss),
+            ..Default::default()
+        };
+        let mut config = default_verify_config(dir.path());
+        config.policy = Some(policy);
+
+        let verifier = OtaVerifier::new(config);
+        let result = verifier.verify(&manifest);
+        assert!(result.is_err());
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(err_str.contains("policy"), "expected policy error, got: {err_str}");
+    }
+}
