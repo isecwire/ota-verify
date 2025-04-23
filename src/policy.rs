@@ -254,3 +254,128 @@ impl VerificationPolicy {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{DeviceCompatibility, InstallHook, Partition, TargetSlot};
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn base_manifest() -> OtaManifest {
+        OtaManifest {
+            manifest_version: 2,
+            version: "2.0.0".into(),
+            device_type: "gateway-v3".into(),
+            partitions: vec![Partition {
+                name: "rootfs".into(),
+                hash_sha256: "aabb".into(),
+                size: 1024,
+                target_slot: TargetSlot::SlotA,
+                delta: None,
+            }],
+            timestamp: Utc::now(),
+            min_battery: 30,
+            rollback_version: "1.0.0".into(),
+            signature_algorithm: Some(KeyAlgorithm::Ed25519),
+            key_rotation: None,
+            certificate_chain: None,
+            compatibility: Some(DeviceCompatibility {
+                hardware_revisions: vec!["v3".into()],
+                boot_rom_versions: vec!["1.2".into()],
+            }),
+            hooks: Some(vec![InstallHook {
+                script: "check.sh".into(),
+                hash_sha256: "aabb".into(),
+                phase: "pre_install".into(),
+            }]),
+            dependencies: None,
+            target_partition_size: None,
+            required_free_space: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn default_policy_passes_basic_manifest() {
+        let policy = VerificationPolicy::default();
+        let manifest = base_manifest();
+        let violations = policy.evaluate(&manifest);
+        assert!(violations.is_empty(), "violations: {:?}", violations);
+    }
+
+    #[test]
+    fn algorithm_mismatch_detected() {
+        let policy = VerificationPolicy {
+            require_algorithm: Some(KeyAlgorithm::RsaPss),
+            ..Default::default()
+        };
+        let manifest = base_manifest();
+        let violations = policy.evaluate(&manifest);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("algorithm"));
+    }
+
+    #[test]
+    fn manifest_version_too_low() {
+        let policy = VerificationPolicy {
+            min_manifest_version: 2,
+            ..Default::default()
+        };
+        let mut manifest = base_manifest();
+        manifest.manifest_version = 1;
+        let violations = policy.evaluate(&manifest);
+        assert!(violations.iter().any(|v| v.contains("manifest_version")));
+    }
+
+    #[test]
+    fn device_type_not_allowed() {
+        let policy = VerificationPolicy {
+            allowed_device_types: vec!["other-device".into()],
+            ..Default::default()
+        };
+        let manifest = base_manifest();
+        let violations = policy.evaluate(&manifest);
+        assert!(violations.iter().any(|v| v.contains("device type")));
+    }
+
+    #[test]
+    fn max_image_size_exceeded() {
+        let policy = VerificationPolicy {
+            max_total_image_size: 512,
+            ..Default::default()
+        };
+        let manifest = base_manifest(); // has 1024 bytes
+        let violations = policy.evaluate(&manifest);
+        assert!(violations.iter().any(|v| v.contains("total image size")));
+    }
+
+    #[test]
+    fn policy_roundtrip() {
+        let policy = VerificationPolicy::strict_example();
+        let json = policy.to_json().expect("serialize");
+        let parsed = VerificationPolicy::from_json(&json).expect("parse");
+        assert_eq!(parsed.name, policy.name);
+        assert_eq!(parsed.max_age_hours, policy.max_age_hours);
+    }
+
+    #[test]
+    fn policy_file_roundtrip() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let path = dir.path().join("policy.json");
+        let policy = VerificationPolicy::strict_example();
+        policy.save(&path).expect("save");
+        let loaded = VerificationPolicy::from_file(&path).expect("load");
+        assert_eq!(loaded.name, policy.name);
+    }
+
+    #[test]
+    fn battery_override_violation() {
+        let policy = VerificationPolicy {
+            min_battery_override: 50,
+            ..Default::default()
+        };
+        let manifest = base_manifest(); // min_battery = 30
+        let violations = policy.evaluate(&manifest);
+        assert!(violations.iter().any(|v| v.contains("min_battery")));
+    }
+}
