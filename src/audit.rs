@@ -133,3 +133,66 @@ impl AuditLog {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_log_records_steps() {
+        let mut log = AuditLog::new("manifest.json", "2.0.0", "gateway");
+        log.record_step("signature", StepOutcome::Pass, "valid", 10);
+        log.record_step("hashes", StepOutcome::Pass, "all match", 50);
+        log.finalize();
+
+        assert_eq!(log.steps.len(), 2);
+        assert_eq!(log.overall_result, StepOutcome::Pass);
+        let (pass, fail, skip) = log.summary();
+        assert_eq!(pass, 2);
+        assert_eq!(fail, 0);
+        assert_eq!(skip, 0);
+    }
+
+    #[test]
+    fn audit_log_failure_sets_overall() {
+        let mut log = AuditLog::new("manifest.json", "2.0.0", "gateway");
+        log.record_step("signature", StepOutcome::Pass, "valid", 10);
+        log.record_step("hashes", StepOutcome::Fail, "mismatch on rootfs", 50);
+        log.finalize();
+
+        assert_eq!(log.overall_result, StepOutcome::Fail);
+    }
+
+    #[test]
+    fn audit_log_json_roundtrip() {
+        let mut log = AuditLog::new("manifest.json", "2.0.0", "gateway");
+        log.record_step("signature", StepOutcome::Pass, "valid", 10);
+        log.finalize();
+
+        let json = log.to_json().expect("serialize");
+        let parsed: AuditLog = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.run_id, log.run_id);
+        assert_eq!(parsed.steps.len(), 1);
+    }
+
+    #[test]
+    fn audit_log_file_save() {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let path = dir.path().join("audit.json");
+
+        let mut log = AuditLog::new("manifest.json", "2.0.0", "gateway");
+        log.record_step("test", StepOutcome::Pass, "ok", 5);
+        log.finalize();
+        log.save(&path).expect("save");
+
+        let data = std::fs::read_to_string(&path).expect("read");
+        assert!(data.contains("run_id"));
+        assert!(data.contains("test"));
+    }
+
+    #[test]
+    fn step_outcome_display() {
+        assert_eq!(StepOutcome::Pass.to_string(), "PASS");
+        assert_eq!(StepOutcome::Fail.to_string(), "FAIL");
+        assert_eq!(StepOutcome::Skip.to_string(), "SKIP");
+    }
+}
