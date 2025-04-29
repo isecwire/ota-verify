@@ -353,3 +353,29 @@ fn truncate_hash(hash: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bytes_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.00 KiB");
+        assert_eq!(format_bytes(1_048_576), "1.00 MiB");
+        assert_eq!(format_bytes(1_073_741_824), "1.00 GiB");
+    }
+
+    #[test]
+    fn truncate_hash_short() {
+        assert_eq!(truncate_hash("aabbccdd"), "aabbccdd");
+    }
+
+    #[test]
+    fn truncate_hash_long() {
+        let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let truncated = truncate_hash(hash);
+        assert!(truncated.contains("..."));
+        assert!(truncated.len() < hash.len());
+    }
+}
