@@ -262,3 +262,185 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Policy { action } => cmd_policy(action),
     }
 }
+
+fn cmd_verify(
+    manifest_path: &PathBuf,
+    package_dir: &PathBuf,
+    public_key: &PathBuf,
+    signature: &PathBuf,
+    max_age: u64,
+    algorithm: Option<&AlgorithmArg>,
+    policy_path: Option<&PathBuf>,
+    audit_log_path: Option<&PathBuf>,
+    ca_key: Option<&PathBuf>,
+) -> Result<()> {
+    let manifest = OtaManifest::from_file(manifest_path)?;
+
+    let policy = match policy_path {
+        Some(p) => Some(VerificationPolicy::from_file(p)?),
+        None => None,
+    };
+
+    let config = VerifyConfig {
+        package_dir: package_dir.clone(),
+        public_key_path: public_key.clone(),
+        signature_path: signature.clone(),
+        max_age_hours: max_age,
+        algorithm: algorithm.map(|a| a.to_key_algorithm()),
+        policy,
+        audit_log_path: audit_log_path.cloned(),
+        manifest_path: Some(manifest_path.clone()),
+        ca_key_path: ca_key.cloned(),
+    };
+
+    let verifier = OtaVerifier::new(config);
+    let checks = verifier.verify(&manifest)?;
+
+    display::print_verification_report(&checks, &manifest);
+
+    if let Some(log_path) = audit_log_path {
+        println!();
+        println!("  Audit log written to: {}", log_path.display());
+    }
+
+    Ok(())
+}
+
+fn cmd_batch(
+    batch_dir: &PathBuf,
+    public_key: &PathBuf,
+    max_age: u64,
+    algorithm: Option<&AlgorithmArg>,
+    policy_path: Option<&PathBuf>,
+) -> Result<()> {
+    let policy = match policy_path {
+        Some(p) => Some(VerificationPolicy::from_file(p)?),
+        None => None,
+    };
+
+    let results = verifier::batch_verify(
+        batch_dir,
+        public_key,
+        max_age,
+        algorithm.map(|a| a.to_key_algorithm()),
+        policy.as_ref(),
+    )?;
+
+    display::print_batch_summary(&results);
+
+    let failed = results.iter().filter(|(_, ok, _)| !*ok).count();
+    if failed > 0 {
+        return Err(errors::OtaError::BatchFailure {
+            count: failed,
+            total: results.len(),
+        });
+    }
+
+    Ok(())
+}
+
+fn cmd_inspect(manifest_path: &PathBuf) -> Result<()> {
+    let manifest = OtaManifest::from_file(manifest_path)?;
+    manifest.print_summary();
+    Ok(())
+}
+
+fn cmd_info(manifest_path: &PathBuf) -> Result<()> {
+    let manifest = OtaManifest::from_file(manifest_path)?;
+    display::print_manifest_info(&manifest);
+    Ok(())
+}
+
+fn cmd_keygen(secret_path: &PathBuf, public_path: &PathBuf, algorithm: &AlgorithmArg) -> Result<()> {
+    let algo = algorithm.to_key_algorithm();
+    crypto::generate_keypair_for_algorithm(&algo, secret_path, public_path)?;
+
+    use colored::Colorize;
+    println!();
+    println!(
+        "{} {} keypair generated:",
+        "\u{2713}".green().bold(),
+        algo.to_string().cyan()
+    );
+    println!("  Secret key: {}", secret_path.display());
+    println!("  Public key: {}", public_path.display());
+    println!();
+    println!("Keep the secret key safe. Distribute the public key to devices.");
+    Ok(())
+}
+
+fn cmd_sign(
+    manifest_path: &PathBuf,
+    secret_key_path: &PathBuf,
+    output_path: &PathBuf,
+    algorithm: &AlgorithmArg,
+) -> Result<()> {
+    let manifest = OtaManifest::from_file(manifest_path)?;
+    let canonical = manifest.to_canonical_json()?;
+    let algo = algorithm.to_key_algorithm();
+    let signature = crypto::sign_bytes_with_algorithm(&canonical, secret_key_path, &algo)?;
+
+    std::fs::write(output_path, &signature)?;
+
+    use colored::Colorize;
+    println!();
+    println!(
+        "{} Manifest signed successfully.",
+        "\u{2713}".green().bold()
+    );
+    println!("  Algorithm: {}", algo.to_string().cyan());
+    println!("  Manifest:  {}", manifest_path.display());
+    println!("  Signature: {}", output_path.display());
+    println!("  Version:   {}", manifest.version);
+    Ok(())
+}
+
+fn cmd_policy(action: PolicyAction) -> Result<()> {
+    match action {
+        PolicyAction::Validate { file } => {
+            let policy = VerificationPolicy::from_file(&file)?;
+            use colored::Colorize;
+            println!(
+                "{} Policy '{}' is valid.",
+                "\u{2713}".green().bold(),
+                policy.name.cyan()
+            );
+            Ok(())
+        }
+        PolicyAction::Generate { output, strict } => {
+            let policy = if strict {
+                VerificationPolicy::strict_example()
+            } else {
+                VerificationPolicy::default()
+            };
+            policy.save(&output)?;
+            use colored::Colorize;
+            println!(
+                "{} Policy '{}' written to {}",
+                "\u{2713}".green().bold(),
+                policy.name.cyan(),
+                output.display()
+            );
+            Ok(())
+        }
+        PolicyAction::Show { file } => {
+            let policy = VerificationPolicy::from_file(&file)?;
+            display::print_policy_info(&policy);
+            Ok(())
+        }
+        PolicyAction::Evaluate { policy, manifest } => {
+            let pol = VerificationPolicy::from_file(&policy)?;
+            let man = OtaManifest::from_file(&manifest)?;
+            let violations = pol.evaluate(&man);
+            if violations.is_empty() {
+                display::print_policy_pass(&pol.name);
+            } else {
+                display::print_policy_violations(&violations);
+                return Err(errors::OtaError::PolicyViolation(
+                    violations.join("; "),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
