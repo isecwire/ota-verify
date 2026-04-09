@@ -68,11 +68,7 @@ impl OtaVerifier {
     }
 
     /// Inner verification logic with audit recording.
-    fn verify_inner(
-        &self,
-        manifest: &OtaManifest,
-        audit: &mut AuditLog,
-    ) -> Result<Vec<String>> {
+    fn verify_inner(&self, manifest: &OtaManifest, audit: &mut AuditLog) -> Result<Vec<String>> {
         let mut passed = Vec::new();
 
         // Step 1: Cryptographic signature.
@@ -81,11 +77,21 @@ impl OtaVerifier {
             Ok(()) => {
                 let algo = self.effective_algorithm(manifest);
                 let msg = format!("Cryptographic signature valid ({})", algo);
-                audit.record_step("signature", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "signature",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Err(e) => {
-                audit.record_step("signature", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "signature",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -94,14 +100,29 @@ impl OtaVerifier {
         let t = Instant::now();
         match self.check_certificate_chain(manifest) {
             Ok(Some(msg)) => {
-                audit.record_step("certificate_chain", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "certificate_chain",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Ok(None) => {
-                audit.record_step("certificate_chain", StepOutcome::Skip, "no chain present", t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "certificate_chain",
+                    StepOutcome::Skip,
+                    "no chain present",
+                    t.elapsed().as_millis() as u64,
+                );
             }
             Err(e) => {
-                audit.record_step("certificate_chain", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "certificate_chain",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -111,11 +132,21 @@ impl OtaVerifier {
         match self.check_partition_files(manifest) {
             Ok(()) => {
                 let msg = "All partition files present".to_string();
-                audit.record_step("partition_files", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "partition_files",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Err(e) => {
-                audit.record_step("partition_files", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "partition_files",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -125,11 +156,21 @@ impl OtaVerifier {
         match self.check_hashes(manifest) {
             Ok(()) => {
                 let msg = "SHA-256 hashes match".to_string();
-                audit.record_step("hashes", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "hashes",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Err(e) => {
-                audit.record_step("hashes", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "hashes",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -142,11 +183,21 @@ impl OtaVerifier {
                     "Version {} > rollback version {}",
                     manifest.version, manifest.rollback_version
                 );
-                audit.record_step("rollback", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "rollback",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Err(e) => {
-                audit.record_step("rollback", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "rollback",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -157,11 +208,21 @@ impl OtaVerifier {
             match self.check_expiry(manifest) {
                 Ok(()) => {
                     let msg = format!("Manifest within {}h age limit", self.config.max_age_hours);
-                    audit.record_step("expiry", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                    audit.record_step(
+                        "expiry",
+                        StepOutcome::Pass,
+                        &msg,
+                        t.elapsed().as_millis() as u64,
+                    );
                     passed.push(msg);
                 }
                 Err(e) => {
-                    audit.record_step("expiry", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                    audit.record_step(
+                        "expiry",
+                        StepOutcome::Fail,
+                        &e.to_string(),
+                        t.elapsed().as_millis() as u64,
+                    );
                     return Err(e);
                 }
             }
@@ -173,14 +234,29 @@ impl OtaVerifier {
         let t = Instant::now();
         match self.check_size_constraints(manifest) {
             Ok(Some(msg)) => {
-                audit.record_step("size_constraints", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "size_constraints",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Ok(None) => {
-                audit.record_step("size_constraints", StepOutcome::Skip, "no size constraints", t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "size_constraints",
+                    StepOutcome::Skip,
+                    "no size constraints",
+                    t.elapsed().as_millis() as u64,
+                );
             }
             Err(e) => {
-                audit.record_step("size_constraints", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "size_constraints",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -189,14 +265,29 @@ impl OtaVerifier {
         let t = Instant::now();
         match self.check_hook_hashes(manifest) {
             Ok(Some(msg)) => {
-                audit.record_step("hook_hashes", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "hook_hashes",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Ok(None) => {
-                audit.record_step("hook_hashes", StepOutcome::Skip, "no hooks defined", t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "hook_hashes",
+                    StepOutcome::Skip,
+                    "no hooks defined",
+                    t.elapsed().as_millis() as u64,
+                );
             }
             Err(e) => {
-                audit.record_step("hook_hashes", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "hook_hashes",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -205,11 +296,21 @@ impl OtaVerifier {
         let t = Instant::now();
         match self.check_package_simulation(manifest) {
             Ok(msg) => {
-                audit.record_step("package_simulation", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "package_simulation",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             }
             Err(e) => {
-                audit.record_step("package_simulation", StepOutcome::Fail, &e.to_string(), t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "package_simulation",
+                    StepOutcome::Fail,
+                    &e.to_string(),
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(e);
             }
         }
@@ -220,11 +321,21 @@ impl OtaVerifier {
             let violations = policy.evaluate(manifest);
             if violations.is_empty() {
                 let msg = format!("Policy '{}' satisfied", policy.name);
-                audit.record_step("policy", StepOutcome::Pass, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "policy",
+                    StepOutcome::Pass,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 passed.push(msg);
             } else {
                 let msg = violations.join("; ");
-                audit.record_step("policy", StepOutcome::Fail, &msg, t.elapsed().as_millis() as u64);
+                audit.record_step(
+                    "policy",
+                    StepOutcome::Fail,
+                    &msg,
+                    t.elapsed().as_millis() as u64,
+                );
                 return Err(OtaError::PolicyViolation(msg));
             }
         }
@@ -678,7 +789,11 @@ mod tests {
         let config = default_verify_config(dir.path());
         let verifier = OtaVerifier::new(config);
         let result = verifier.verify(&manifest);
-        assert!(result.is_ok(), "full verify should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "full verify should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -840,6 +955,9 @@ mod tests {
         let result = verifier.verify(&manifest);
         assert!(result.is_err());
         let err_str = format!("{}", result.unwrap_err());
-        assert!(err_str.contains("policy"), "expected policy error, got: {err_str}");
+        assert!(
+            err_str.contains("policy"),
+            "expected policy error, got: {err_str}"
+        );
     }
 }

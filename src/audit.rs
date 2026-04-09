@@ -126,9 +126,21 @@ impl AuditLog {
 
     /// Return the count of passed, failed, and skipped steps.
     pub fn summary(&self) -> (usize, usize, usize) {
-        let pass = self.steps.iter().filter(|s| s.outcome == StepOutcome::Pass).count();
-        let fail = self.steps.iter().filter(|s| s.outcome == StepOutcome::Fail).count();
-        let skip = self.steps.iter().filter(|s| s.outcome == StepOutcome::Skip).count();
+        let pass = self
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Pass)
+            .count();
+        let fail = self
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Fail)
+            .count();
+        let skip = self
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Skip)
+            .count();
         (pass, fail, skip)
     }
 }

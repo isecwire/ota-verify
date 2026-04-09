@@ -98,7 +98,8 @@ impl VerificationPolicy {
 
     /// Parse a policy from a JSON string.
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(|e| OtaError::PolicyViolation(format!("invalid policy: {e}")))
+        serde_json::from_str(json)
+            .map_err(|e| OtaError::PolicyViolation(format!("invalid policy: {e}")))
     }
 
     /// Serialize the policy to pretty-printed JSON.
@@ -235,21 +236,50 @@ impl VerificationPolicy {
         } else {
             println!("  Required algorithm:       any");
         }
-        println!("  Max age (hours):          {}", if self.max_age_hours == 0 { "unlimited".to_string() } else { self.max_age_hours.to_string() });
-        println!("  Rollback protection:      {}", self.require_rollback_protection);
-        println!("  Min manifest version:     {}", if self.min_manifest_version == 0 { "any".to_string() } else { format!("v{}", self.min_manifest_version) });
-        println!("  Require compat matrix:    {}", self.require_compatibility_matrix);
+        println!(
+            "  Max age (hours):          {}",
+            if self.max_age_hours == 0 {
+                "unlimited".to_string()
+            } else {
+                self.max_age_hours.to_string()
+            }
+        );
+        println!(
+            "  Rollback protection:      {}",
+            self.require_rollback_protection
+        );
+        println!(
+            "  Min manifest version:     {}",
+            if self.min_manifest_version == 0 {
+                "any".to_string()
+            } else {
+                format!("v{}", self.min_manifest_version)
+            }
+        );
+        println!(
+            "  Require compat matrix:    {}",
+            self.require_compatibility_matrix
+        );
         println!("  Require hooks:            {}", self.require_hooks);
         println!("  Require key rotation:     {}", self.require_key_rotation);
-        println!("  Require cert chain:       {}", self.require_certificate_chain);
+        println!(
+            "  Require cert chain:       {}",
+            self.require_certificate_chain
+        );
         if self.min_battery_override > 0 {
             println!("  Min battery override:     {}%", self.min_battery_override);
         }
         if !self.allowed_device_types.is_empty() {
-            println!("  Allowed device types:     {:?}", self.allowed_device_types);
+            println!(
+                "  Allowed device types:     {:?}",
+                self.allowed_device_types
+            );
         }
         if self.max_total_image_size > 0 {
-            println!("  Max total image size:     {} bytes", self.max_total_image_size);
+            println!(
+                "  Max total image size:     {} bytes",
+                self.max_total_image_size
+            );
         }
     }
 }

@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::ptr_arg)]
+
 mod audit;
 mod crypto;
 mod display;
@@ -245,7 +248,13 @@ fn run(cli: Cli) -> Result<()> {
             max_age,
             algorithm,
             policy,
-        } => cmd_batch(&dir, &public_key, max_age, algorithm.as_ref(), policy.as_ref()),
+        } => cmd_batch(
+            &dir,
+            &public_key,
+            max_age,
+            algorithm.as_ref(),
+            policy.as_ref(),
+        ),
         Commands::Inspect { manifest } => cmd_inspect(&manifest),
         Commands::Info { manifest } => cmd_info(&manifest),
         Commands::Keygen {
@@ -263,6 +272,7 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_verify(
     manifest_path: &PathBuf,
     package_dir: &PathBuf,
@@ -351,7 +361,11 @@ fn cmd_info(manifest_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_keygen(secret_path: &PathBuf, public_path: &PathBuf, algorithm: &AlgorithmArg) -> Result<()> {
+fn cmd_keygen(
+    secret_path: &PathBuf,
+    public_path: &PathBuf,
+    algorithm: &AlgorithmArg,
+) -> Result<()> {
     let algo = algorithm.to_key_algorithm();
     crypto::generate_keypair_for_algorithm(&algo, secret_path, public_path)?;
 
@@ -436,9 +450,7 @@ fn cmd_policy(action: PolicyAction) -> Result<()> {
                 display::print_policy_pass(&pol.name);
             } else {
                 display::print_policy_violations(&violations);
-                return Err(errors::OtaError::PolicyViolation(
-                    violations.join("; "),
-                ));
+                return Err(errors::OtaError::PolicyViolation(violations.join("; ")));
             }
             Ok(())
         }

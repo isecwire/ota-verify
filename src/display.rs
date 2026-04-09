@@ -12,12 +12,7 @@ use crate::policy::VerificationPolicy;
 /// Print a verification report with colored status indicators.
 pub fn print_verification_report(checks: &[String], manifest: &OtaManifest) {
     println!();
-    println!(
-        "{}",
-        "OTA Package Verification: PASSED"
-            .green()
-            .bold()
-    );
+    println!("{}", "OTA Package Verification: PASSED".green().bold());
     println!();
     for check in checks {
         println!("  {} {}", "\u{2713}".green().bold(), check);
@@ -33,12 +28,7 @@ pub fn print_verification_report(checks: &[String], manifest: &OtaManifest) {
 /// Print a verification failure report.
 pub fn print_verification_failure(error: &str) {
     println!();
-    println!(
-        "{}",
-        "OTA Package Verification: FAILED"
-            .red()
-            .bold()
-    );
+    println!("{}", "OTA Package Verification: FAILED".red().bold());
     println!();
     println!("  {} {}", "\u{2717}".red().bold(), error);
 }
@@ -46,10 +36,7 @@ pub fn print_verification_failure(error: &str) {
 /// Print policy violations.
 pub fn print_policy_violations(violations: &[String]) {
     println!();
-    println!(
-        "{}",
-        "Policy Evaluation: FAILED".red().bold()
-    );
+    println!("{}", "Policy Evaluation: FAILED".red().bold());
     println!();
     for v in violations {
         println!("  {} {}", "\u{2717}".red().bold(), v);
@@ -75,14 +62,23 @@ pub fn print_manifest_info(manifest: &OtaManifest) {
     println!();
 
     // Core fields table
-    print_field("Manifest version", &format!("v{}", manifest.manifest_version));
+    print_field(
+        "Manifest version",
+        &format!("v{}", manifest.manifest_version),
+    );
     print_field("Package version", &manifest.version);
     print_field("Device type", &manifest.device_type);
     print_field("Timestamp", &manifest.timestamp.to_rfc3339());
     print_field("Min battery", &format!("{}%", manifest.min_battery));
     print_field("Rollback version", &manifest.rollback_version);
-    print_field("Signature algorithm", &manifest.effective_algorithm().to_string());
-    print_field("Total image size", &format_bytes(manifest.total_image_size()));
+    print_field(
+        "Signature algorithm",
+        &manifest.effective_algorithm().to_string(),
+    );
+    print_field(
+        "Total image size",
+        &format_bytes(manifest.total_image_size()),
+    );
     print_field("Partition count", &manifest.partitions.len().to_string());
 
     // Partitions
@@ -128,11 +124,7 @@ pub fn print_manifest_info(manifest: &OtaManifest) {
             println!("{}", "Install Hooks".yellow().bold());
             println!("{}", "-".repeat(60).dimmed());
             for hook in hooks {
-                println!(
-                    "  [{}] {}",
-                    hook.phase.cyan(),
-                    hook.script
-                );
+                println!("  [{}] {}", hook.phase.cyan(), hook.script);
             }
         }
     }
@@ -144,11 +136,7 @@ pub fn print_manifest_info(manifest: &OtaManifest) {
             println!("{}", "Dependencies".yellow().bold());
             println!("{}", "-".repeat(60).dimmed());
             for dep in deps {
-                println!(
-                    "  {} >= {}",
-                    dep.component.cyan(),
-                    dep.version.yellow()
-                );
+                println!("  {} >= {}", dep.component.cyan(), dep.version.yellow());
             }
         }
     }
@@ -158,7 +146,10 @@ pub fn print_manifest_info(manifest: &OtaManifest) {
         println!();
         println!("{}", "Key Rotation".yellow().bold());
         println!("{}", "-".repeat(60).dimmed());
-        print_field("Next key algorithm", &rotation.next_key_algorithm.to_string());
+        print_field(
+            "Next key algorithm",
+            &rotation.next_key_algorithm.to_string(),
+        );
         print_field(
             "Next public key",
             &format!(
@@ -179,7 +170,11 @@ pub fn print_manifest_info(manifest: &OtaManifest) {
         if total <= target_size {
             print_field(
                 "Headroom",
-                &format!("{} {}", format_bytes(target_size - total), "\u{2713}".green()),
+                &format!(
+                    "{} {}",
+                    format_bytes(target_size - total),
+                    "\u{2713}".green()
+                ),
             );
         } else {
             print_field(
@@ -286,7 +281,11 @@ pub fn print_policy_info(policy: &VerificationPolicy) {
 
     print_field(
         "Required algorithm",
-        &policy.require_algorithm.as_ref().map(|a| a.to_string()).unwrap_or("any".into()),
+        &policy
+            .require_algorithm
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or("any".into()),
     );
     print_field(
         "Max age (hours)",
@@ -296,7 +295,10 @@ pub fn print_policy_info(policy: &VerificationPolicy) {
             policy.max_age_hours.to_string()
         },
     );
-    print_field("Rollback protection", &policy.require_rollback_protection.to_string());
+    print_field(
+        "Rollback protection",
+        &policy.require_rollback_protection.to_string(),
+    );
     print_field(
         "Min manifest version",
         &if policy.min_manifest_version == 0 {
@@ -305,19 +307,37 @@ pub fn print_policy_info(policy: &VerificationPolicy) {
             format!("v{}", policy.min_manifest_version)
         },
     );
-    print_field("Require compat matrix", &policy.require_compatibility_matrix.to_string());
+    print_field(
+        "Require compat matrix",
+        &policy.require_compatibility_matrix.to_string(),
+    );
     print_field("Require hooks", &policy.require_hooks.to_string());
-    print_field("Require key rotation", &policy.require_key_rotation.to_string());
-    print_field("Require cert chain", &policy.require_certificate_chain.to_string());
+    print_field(
+        "Require key rotation",
+        &policy.require_key_rotation.to_string(),
+    );
+    print_field(
+        "Require cert chain",
+        &policy.require_certificate_chain.to_string(),
+    );
 
     if policy.min_battery_override > 0 {
-        print_field("Min battery override", &format!("{}%", policy.min_battery_override));
+        print_field(
+            "Min battery override",
+            &format!("{}%", policy.min_battery_override),
+        );
     }
     if !policy.allowed_device_types.is_empty() {
-        print_field("Allowed device types", &policy.allowed_device_types.join(", "));
+        print_field(
+            "Allowed device types",
+            &policy.allowed_device_types.join(", "),
+        );
     }
     if policy.max_total_image_size > 0 {
-        print_field("Max total image size", &format_bytes(policy.max_total_image_size));
+        print_field(
+            "Max total image size",
+            &format_bytes(policy.max_total_image_size),
+        );
     }
 
     println!();
@@ -326,11 +346,7 @@ pub fn print_policy_info(policy: &VerificationPolicy) {
 // --- Helpers ---
 
 fn print_field(label: &str, value: &str) {
-    println!(
-        "  {:<24} {}",
-        format!("{}:", label).dimmed(),
-        value
-    );
+    println!("  {:<24} {}", format!("{}:", label).dimmed(), value);
 }
 
 fn format_bytes(bytes: u64) -> String {

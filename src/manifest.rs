@@ -283,7 +283,10 @@ impl OtaManifest {
             println!("      Size:   {} bytes", p.size);
             println!("      Slot:   {}", p.target_slot);
             if let Some(ref delta) = p.delta {
-                println!("      Delta:  base={}, algo={}", delta.delta_base_version, delta.patch_algorithm);
+                println!(
+                    "      Delta:  base={}, algo={}",
+                    delta.delta_base_version, delta.patch_algorithm
+                );
             }
         }
 
@@ -291,10 +294,16 @@ impl OtaManifest {
             println!();
             println!("Device Compatibility:");
             if !compat.hardware_revisions.is_empty() {
-                println!("  Hardware revisions: {}", compat.hardware_revisions.join(", "));
+                println!(
+                    "  Hardware revisions: {}",
+                    compat.hardware_revisions.join(", ")
+                );
             }
             if !compat.boot_rom_versions.is_empty() {
-                println!("  Boot ROM versions:  {}", compat.boot_rom_versions.join(", "));
+                println!(
+                    "  Boot ROM versions:  {}",
+                    compat.boot_rom_versions.join(", ")
+                );
             }
         }
 
@@ -320,7 +329,10 @@ impl OtaManifest {
             println!();
             println!("Key Rotation:");
             println!("  Next key algo:  {}", rotation.next_key_algorithm);
-            println!("  Next public key: {}...", &rotation.next_public_key[..std::cmp::min(32, rotation.next_public_key.len())]);
+            println!(
+                "  Next public key: {}...",
+                &rotation.next_public_key[..std::cmp::min(32, rotation.next_public_key.len())]
+            );
         }
 
         if let Some(target_size) = self.target_partition_size {
@@ -332,7 +344,10 @@ impl OtaManifest {
             if total <= target_size {
                 println!("  Headroom:             {} bytes", target_size - total);
             } else {
-                println!("  OVERFLOW:             {} bytes over limit", total - target_size);
+                println!(
+                    "  OVERFLOW:             {} bytes over limit",
+                    total - target_size
+                );
             }
         }
     }
@@ -428,10 +443,7 @@ mod tests {
 
         assert_eq!(parsed.manifest_version, 2);
         assert!(parsed.is_v2());
-        assert_eq!(
-            parsed.signature_algorithm,
-            Some(KeyAlgorithm::Ed25519)
-        );
+        assert_eq!(parsed.signature_algorithm, Some(KeyAlgorithm::Ed25519));
         assert!(parsed.compatibility.is_some());
         assert!(parsed.hooks.is_some());
         assert!(parsed.dependencies.is_some());
@@ -549,8 +561,7 @@ mod tests {
 
     #[test]
     fn target_slot_invalid_value() {
-        let result: std::result::Result<TargetSlot, _> =
-            serde_json::from_str(r#""slot_c""#);
+        let result: std::result::Result<TargetSlot, _> = serde_json::from_str(r#""slot_c""#);
         assert!(result.is_err());
     }
 

@@ -246,7 +246,10 @@ mod tests {
 
         let tampered = b"firmware payload v2.4.1-TAMPERED";
         let result = verify_signature(tampered, &sig_hex, &public_path);
-        assert!(result.is_err(), "verification with tampered data should fail");
+        assert!(
+            result.is_err(),
+            "verification with tampered data should fail"
+        );
     }
 
     #[test]
@@ -299,8 +302,7 @@ mod tests {
         generate_keypair_for_algorithm(&KeyAlgorithm::EcdsaP256, &secret, &public).expect("keygen");
 
         let data = b"test data";
-        let sig =
-            sign_bytes_with_algorithm(data, &secret, &KeyAlgorithm::EcdsaP256).expect("sign");
+        let sig = sign_bytes_with_algorithm(data, &secret, &KeyAlgorithm::EcdsaP256).expect("sign");
         verify_with_algorithm(data, &sig, &public, &KeyAlgorithm::EcdsaP256).expect("verify");
     }
 
@@ -329,8 +331,7 @@ mod tests {
     #[test]
     fn certificate_chain_empty_rejected() {
         let (_dir, _secret_path, public_path) = gen_temp_keypair();
-        let result =
-            verify_certificate_chain(&[], &public_path, &KeyAlgorithm::Ed25519);
+        let result = verify_certificate_chain(&[], &public_path, &KeyAlgorithm::Ed25519);
         assert!(result.is_err());
     }
 
